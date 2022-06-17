@@ -1,6 +1,6 @@
 {
-  "short_name": "Handpose",
-  "name": "Handpose",
+  "short_name": "conductor",
+  "name": "conductor",
   "start_url": ".",
   "display": "standalone",
   "theme_color": "#000000",
