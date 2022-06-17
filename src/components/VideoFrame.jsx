@@ -150,7 +150,6 @@ class VideoFrame extends React.Component {
         alert("No MIDI outputs are detected. Either connect a midi device, or create a virtual one. On Mac computers, open 'Audio Midi Setup' > 'MIDI Studio' > double-click IAC Driver > Enable 'Device is online' and refresh this page.");
       }
 
-
       const midi_output = WebMidi.outputs[0];
       console.log("midi_output in landmarks:  ", midi_output?.name);
       const {model} = this.state;
