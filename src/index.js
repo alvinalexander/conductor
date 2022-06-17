@@ -3,13 +3,17 @@ import ReactDOM from 'react-dom';
 import './index.css';
 import Root from './components/Root';
 import * as serviceWorker from './serviceWorker';
+import {webMidiInit} from './web-midi'
 
-ReactDOM.render(
-  <React.StrictMode>
-    <Root />
-  </React.StrictMode>,
-  document.getElementById('root')
-);
+async function init() {
+  await webMidiInit();
+  ReactDOM.render(
+      <Root />,
+    document.getElementById('root')
+  );
+}
+
+init();
 
 // If you want your app to work offline and load faster, you can change
 // unregister() to register() below. Note this comes with some pitfalls.
