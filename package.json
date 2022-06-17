@@ -1,8 +1,11 @@
 {
-  "name": "handpose-front-end",
+  "name": "conductor",
   "version": "0.1.0",
   "private": true,
+  "homepage": "https://git.corp.adobe.com/pages/aghouas/conductor-react/",
   "dependencies": {
+    "@material-ui/core": "^4.10.0",
+    "@material-ui/icons": "^4.9.1",
     "@tensorflow-models/coco-ssd": "^2.0.3",
     "@tensorflow-models/handpose": "^0.0.4",
     "@tensorflow/tfjs": "^1.7.4",
@@ -11,6 +14,7 @@
     "@testing-library/jest-dom": "^4.2.4",
     "@testing-library/react": "^9.3.2",
     "@testing-library/user-event": "^7.1.2",
+    "gh-pages": "^3.0.0",
     "react": "^16.13.1",
     "react-dom": "^16.13.1",
     "react-scripts": "3.4.1",
@@ -20,6 +24,8 @@
     "webmidi": "^2.5.1"
   },
   "scripts": {
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d build",
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",

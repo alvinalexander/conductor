@@ -1,20 +1,22 @@
 import React from 'react';
-import * as THREE from 'three';
-import WebMidi from 'webmidi'
+import WebMidi from 'webmidi';
+import {get_index_tip_x, get_index_tip_y, get_index_tip_z, compute_spread, compute_yaw, compute_roll, get_index_tip_to_base_dist} from '../coordinateTransform.js';
 import * as handpose from '@tensorflow-models/handpose';
 import * as tfjsWasm from '@tensorflow/tfjs-backend-wasm';
 // TODO(annxingyuan): read version from tfjsWasm directly once
 // https://github.com/tensorflow/tfjs/pull/2819 is merged.
 import {version} from '@tensorflow/tfjs-backend-wasm/dist/version';
 import * as tf from '@tensorflow/tfjs-core';
-import {ScatterGL} from 'scatter-gl';
 import Stats from "stats-js"
+// import Paper from '@material-ui/core/Paper';
+import VideoContainer from './VideoContainer';
+
 tfjsWasm.setWasmPath(
   `https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-wasm@${
       version}/dist/tfjs-backend-wasm.wasm`);
 
 let videoWidth, videoHeight,
-scatterGLHasInitialized = false, scatterGL, fingerLookupIndices = {
+ fingerLookupIndices = {
   thumb: [0, 1, 2, 3, 4],
   indexFinger: [0, 5, 6, 7, 8],
   middleFinger: [0, 9, 10, 11, 12],
@@ -24,39 +26,33 @@ scatterGLHasInitialized = false, scatterGL, fingerLookupIndices = {
 
 const VIDEO_WIDTH = 640;
 const VIDEO_HEIGHT = 500;
-const renderPointcloud = false;
 
 class VideoFrame extends React.Component {
 
-    constructor(props){
+    constructor(props){ 
         super(props);
         this.state = {
           backend: 'webgl'
         }
-        this.videoRef = React.createRef();
+        this.videoRef = React.createRef()
         this.canvasRef = React.createRef();
-        this.styles = {
-            position: 'fixed',
-            top: 150,
-            left: 150,
-        }
     }
-    
+
     drawPoint(ctx, y, x, r) {
       ctx.beginPath();
       ctx.arc(x, y, r, 0, 2 * Math.PI);
       ctx.fill();
-    } 
+    }
 
     drawKeypoints(ctx, keypoints) {
       const keypointsArray = keypoints;
-    
+
       for (let i = 0; i < keypointsArray.length; i++) {
         const y = keypointsArray[i][0];
         const x = keypointsArray[i][1];
         this.drawPoint(ctx, x - 2, y - 2, 3);
       }
-    
+
       const fingers = Object.keys(fingerLookupIndices);
       for (let i = 0; i < fingers.length; i++) {
         const finger = fingers[i];
@@ -66,14 +62,14 @@ class VideoFrame extends React.Component {
     }
 
     drawPath(ctx, points, closePath) {
-    
+
       const region = new Path2D();
       region.moveTo(points[0][0], points[0][1]);
       for (let i = 1; i < points.length; i++) {
         const point = points[i];
         region.lineTo(point[0], point[1]);
       }
-    
+
       if (closePath) {
         region.closePath();
       }
@@ -85,7 +81,7 @@ class VideoFrame extends React.Component {
         throw new Error(
             'Browser API navigator.mediaDevices.getUserMedia not available');
       }
-    
+
       const video = this.videoRef.current;
       const stream = await navigator.mediaDevices.getUserMedia({
         'audio': false,
@@ -98,10 +94,10 @@ class VideoFrame extends React.Component {
         },
       });
 
-      // window.stream = stream;
-      
+      window.stream = stream;
+
       video.srcObject = stream;
-    
+
       return new Promise((resolve) => {
         video.onloadedmetadata = () => {
           resolve(video);
@@ -114,114 +110,160 @@ class VideoFrame extends React.Component {
       video.play();
       return video;
     }
-    
-  
+
+
     async componentDidMount(){
       await tf.setBackend(this.state.backend);
       const model = await handpose.load();
       await this.setState({model:model}) // is this async or not
       let video;
-    
+
+
       try {
         video = await this.loadVideo();
+        this.props.onInitComplete();
       } catch (e) {
-        let info = document.getElementById('info');
-        info.textContent = e.message;
-        info.style.display = 'block';
+        // let info = document.getElementById('info');
+        // info.textContent = e.message;
+        // info.style.display = 'block';
+        console.error(e);
         throw e;
       }
-    
+
       this.landmarksRealTime(video);
     }
 
+    componentDidUpdate(){
+      //It seems the drawing context is reset everytime the component updates
+      const canvas = this.canvasRef.current;
+      canvas.width = VIDEO_WIDTH;
+      canvas.height = VIDEO_HEIGHT;
+      const ctx = canvas.getContext('2d');
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+
     async landmarksRealTime (video) {
+
+      const midi_output = WebMidi.outputs[0];
+      console.log("midi_output in landmarks:  ", midi_output?.name);
       const {model} = this.state;
+      //TODO: move stats instance creation up to parent
       const stats = new Stats();
       stats.showPanel(0);
-      document.body.appendChild(stats.dom);
-      stats.domElement.style = {
-        top: 500,
-        left: 500,
-      };
-    
+      document.getElementById("control-area").appendChild(stats.dom);
+      stats.domElement.style.position = "absolute"; 
+      stats.domElement.style.bottom = "200px"; 
+      stats.domElement.style.left = "8px"; 
+      stats.domElement.style.top = ""; 
+
       videoWidth = video.videoWidth;
       videoHeight = video.videoHeight;
-    
+
       const canvas = this.canvasRef.current;
-    
       canvas.width = videoWidth;
       canvas.height = videoHeight;
-    
+
       const ctx = canvas.getContext('2d');
-    
+
       video.width = videoWidth;
       video.height = videoHeight;
-    
+
       ctx.clearRect(0, 0, videoWidth, videoHeight);
       ctx.strokeStyle = 'red';
       ctx.fillStyle = 'red';
-    
+
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
-    
-      // These anchor points allow the hand pointcloud to resize according to its
-      // position in the input.
-      const ANCHOR_POINTS = [
-        [0, 0, 0], [0, -VIDEO_HEIGHT, 0], [-VIDEO_WIDTH, 0, 0],
-        [-VIDEO_WIDTH, -VIDEO_HEIGHT, 0]
-      ];
-    
+
       const frameLandmarks = async () => {
+        ctx.strokeStyle = 'red';
+        ctx.fillStyle = 'red';
+  
+        const activeGestures = this.props.gestures;
+
         stats.begin();
         ctx.drawImage(
             video, 0, 0, videoWidth, videoHeight, 0, 0, canvas.width,
             canvas.height);
-        const predictions = await model.estimateHands(video);
+
+        // Run inference
+        const predictions = await model.estimateHands(video, null, false);
+
         if (predictions.length > 0) {
           const result = predictions[0].landmarks;
           this.drawKeypoints(ctx, result, predictions[0].annotations);
-    
-          if (renderPointcloud === true && scatterGL != null) {
-            const pointsData = result.map(point => {
-              return [-point[0], -point[1], -point[2]];
-            });
-    
-            const dataset =
-                new ScatterGL.Dataset([...pointsData, ...ANCHOR_POINTS]);
-    
-            if (!scatterGLHasInitialized) {
-              scatterGL.render(dataset);
-    
-              const fingers = Object.keys(fingerLookupIndices);
-    
-              scatterGL.setSequences(
-                  fingers.map(finger => ({indices: fingerLookupIndices[finger]})));
-              scatterGL.setPointColorer((index) => {
-                if (index < pointsData.length) {
-                  return 'steelblue';
-                }
-                return 'white';  // Hide.
-              });
-            } else {
-              scatterGL.updateDataset(dataset);
+
+          // Loop over gestures - if active, compute hand metrics and send midi message
+          const midiChannel = 1
+          const nordCutoffCC = 59;
+          const nordResonanceCC = 60;
+          const nordDrawbars1CC = 16;
+          const nordDrawbars2CC = 17;
+          const nordDrawbars3CC = 18;
+          const nordDrawbars4CC = 19;
+          const nordDrawbars5CC = 20;
+          const nordDrawbars6CC = 21;
+          const nordDrawbars7CC = 22;
+          const nordDrawbars8CC = 23;
+          const nordDrawbars9CC = 24;
+          const expressionPedal = 11;
+          const nordLeslieSpeedCC = 108;
+
+          let midiVal;
+          for (const [gestureType, isActive] of Object.entries(activeGestures)) {
+
+            if (gestureType.localeCompare("xcontrol") === 0 && isActive) {
+              midiVal = get_index_tip_x(predictions, VIDEO_WIDTH, VIDEO_HEIGHT);
+              midi_output.sendControlChange(16, midiVal, midiChannel);
+              console.log(gestureType, midiVal);
             }
-            scatterGLHasInitialized = true;
+
+            if (gestureType.localeCompare("ycontrol") === 0 && isActive) {
+              midiVal = get_index_tip_y(predictions, VIDEO_WIDTH, VIDEO_HEIGHT);
+              midi_output.sendControlChange(11, midiVal, midiChannel);
+              console.log(gestureType, midiVal);
+            }
+            if (gestureType.localeCompare("spread") === 0 && isActive) {
+              midiVal = compute_spread(predictions, VIDEO_WIDTH, VIDEO_HEIGHT);
+              midi_output.sendControlChange(66, midiVal, midiChannel);
+              console.log(gestureType, midiVal);
+            }
+
+            if (gestureType.localeCompare("rotation") === 0 && isActive) {
+              console.log(gestureType);
+            }
+
+            if (gestureType.localeCompare("roll") === 0 && isActive) {
+              midiVal = compute_roll(predictions, VIDEO_WIDTH, VIDEO_HEIGHT);
+              midi_output.sendControlChange(15, midiVal, midiChannel);
+              console.log(gestureType, midiVal);
+            }
+
+            if (gestureType.localeCompare("proximity") === 0 && isActive) {
+              //midiVal = get_index_tip_z(predictions, VIDEO_WIDTH, VIDEO_HEIGHT);
+              midiVal = get_index_tip_to_base_dist(predictions, VIDEO_WIDTH, VIDEO_HEIGHT);
+              midi_output.sendControlChange(17, midiVal, midiChannel);
+              console.log(gestureType, midiVal);
+            }
+
+            if (gestureType.localeCompare("pitch") === 0 && isActive) {
+              console.log(gestureType);
+            }
+
+            if (gestureType.localeCompare("yaw") === 0 && isActive) {
+              midiVal = compute_yaw(predictions, VIDEO_WIDTH, VIDEO_HEIGHT);
+              midi_output.sendControlChange(16, midiVal, midiChannel);
+              console.log(gestureType, midiVal);
+            }
+
           }
         }
         stats.end();
         requestAnimationFrame(frameLandmarks);
       };
-    
+
       frameLandmarks();
-    
-      if (renderPointcloud) {
-        document.querySelector('#scatter-gl-container').style =
-            `width: ${VIDEO_WIDTH}px; height: ${VIDEO_HEIGHT}px;`;
-    
-        scatterGL = new ScatterGL(
-            document.querySelector('#scatter-gl-container'),
-            {'rotateOnStart': false, 'selectEnabled': false});
-      }
     };
 
     showDetections(predictions) {
@@ -230,7 +272,7 @@ class VideoFrame extends React.Component {
         const font = "24px helvetica";
         ctx.font = font;
         ctx.textBaseline = "top";
-    
+
         predictions.forEach(prediction => {
           const x = prediction.bbox[0];
           const y = prediction.bbox[1];
@@ -248,7 +290,7 @@ class VideoFrame extends React.Component {
           ctx.fillRect(x, y, textWidth + 10, textHeight + 10);
           // draw bottom left rectangle
           ctx.fillRect(x, y + height - textHeight, textWidth + 15, textHeight + 10);
-    
+
           // Draw the text last to ensure it's on top.
           ctx.fillStyle = "#000000";
           ctx.fillText(prediction.class, x, y);
@@ -256,25 +298,25 @@ class VideoFrame extends React.Component {
         });
       };
 
-
       render() {
         return (
-            <div> 
+            <div id="video-container">
               <video
-                style={this.styles}
-                autoPlay
-                muted
+                style={{
+                  display:"none",
+                  transform: "rotateY(180deg)"
+                }}
                 ref={this.videoRef}
                 width={VIDEO_WIDTH}
                 height={VIDEO_HEIGHT}
               />
-              <canvas style={this.styles} ref={this.canvasRef} width={videoWidth} height={videoHeight} />
+              <VideoContainer>
+                <canvas ref={this.canvasRef} width={videoWidth} height={videoHeight} />
+              </VideoContainer>
             </div>
           );
       }
 
-
 }
 
-
-export default VideoFrame;
+export default VideoFrame
